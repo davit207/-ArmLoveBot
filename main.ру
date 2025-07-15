@@ -1,5 +1,3 @@
-# Создаём готовый main.py с ботом для загрузки в PythonAnywhere и возможной отправки на GitHub
-
 bot_code_path = "/mnt/data/main.py"
 
 with open(bot_code_path, "w", encoding="utf-8") as f:
