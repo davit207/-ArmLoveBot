@@ -1,18 +1,17 @@
-bot_code_path = "/mnt/data/main.py"
 
-with open(bot_code_path, "w", encoding="utf-8") as f:
-    f.write('''\
 import asyncio
 import sqlite3
 from aiogram import Bot, Dispatcher, types, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InputFile
 from aiogram.filters import Command
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
-BOT_TOKEN = "8177389098:AAGr8zN3UDEE2K8L19ZwEPXHjGbZXXgWcNw"
+BOT_TOKEN = "8177389098:AAGr8zN3UDEE2K8L19ZwEPXHjGbZXXgWcNw
+"
 bot = Bot(token=BOT_TOKEN)
 dp = Dispatcher()
 
+# Инициализация базы данных
 def init_db():
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
@@ -44,7 +43,7 @@ async def start(message: Message):
     if user:
         await message.answer("👋 Добро пожаловать обратно в ArmLove!")
     else:
-        await message.answer("👋 Добро пожаловать в ArmLove! Давай создадим твою анкету.\\nКак тебя зовут?")
+        await message.answer("👋 Добро пожаловать в ArmLove! Давай создадим твою анкету.\nКак тебя зовут?")
         await bot.send_chat_action(message.chat.id, "typing")
         dp.data[message.from_user.id] = {}
         dp.data[message.from_user.id]["step"] = "name"
@@ -123,7 +122,7 @@ async def show_profile(message: Message):
 
     if profile:
         photo = profile[6]
-        text = f"Имя: {profile[1]}\\nВозраст: {profile[2]}\\nГород: {profile[4]}\\nО себе: {profile[5]}"
+        text = f"Имя: {profile[1]}\nВозраст: {profile[2]}\nГород: {profile[4]}\nО себе: {profile[5]}"
         kb = InlineKeyboardBuilder()
         kb.button(text="❤️", callback_data=f"like:{profile[0]}")
         kb.button(text="❌", callback_data=f"skip:{profile[0]}")
@@ -135,13 +134,17 @@ async def show_profile(message: Message):
 async def like_user(callback: CallbackQuery):
     to_id = int(callback.data.split(":")[1])
     from_id = callback.from_user.id
+
     conn = sqlite3.connect("database.db")
     c = conn.cursor()
     c.execute("INSERT OR IGNORE INTO likes VALUES (?, ?)", (from_id, to_id))
+
+    # Проверка взаимности
     c.execute("SELECT * FROM likes WHERE from_id = ? AND to_id = ?", (to_id, from_id))
     mutual = c.fetchone()
     conn.commit()
     conn.close()
+
     if mutual:
         await callback.message.answer("🎉 У вас совпадение! Вы можете написать друг другу.")
         try:
@@ -166,6 +169,3 @@ async def skip_user(callback: CallbackQuery):
 if __name__ == "__main__":
     init_db()
     asyncio.run(dp.start_polling(bot))
-''')
-
-bot_code_path
