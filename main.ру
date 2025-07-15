@@ -1,0 +1,173 @@
+# Создаём готовый main.py с ботом для загрузки в PythonAnywhere и возможной отправки на GitHub
+
+bot_code_path = "/mnt/data/main.py"
+
+with open(bot_code_path, "w", encoding="utf-8") as f:
+    f.write('''\
+import asyncio
+import sqlite3
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.types import Message, CallbackQuery
+from aiogram.filters import Command
+from aiogram.utils.keyboard import InlineKeyboardBuilder
+
+BOT_TOKEN = "8177389098:AAGr8zN3UDEE2K8L19ZwEPXHjGbZXXgWcNw"
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher()
+
+def init_db():
+    conn = sqlite3.connect("database.db")
+    c = conn.cursor()
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        name TEXT,
+        age INTEGER,
+        gender TEXT,
+        city TEXT,
+        bio TEXT,
+        photo_id TEXT
+    )""")
+    c.execute("""
+    CREATE TABLE IF NOT EXISTS likes (
+        from_id INTEGER,
+        to_id INTEGER,
+        UNIQUE(from_id, to_id)
+    )""")
+    conn.commit()
+    conn.close()
+
+@dp.message(Command("start"))
+async def start(message: Message):
+    conn = sqlite3.connect("database.db")
+    c = conn.cursor()
+    c.execute("SELECT * FROM users WHERE user_id = ?", (message.from_user.id,))
+    user = c.fetchone()
+    if user:
+        await message.answer("👋 Добро пожаловать обратно в ArmLove!")
+    else:
+        await message.answer("👋 Добро пожаловать в ArmLove! Давай создадим твою анкету.\\nКак тебя зовут?")
+        await bot.send_chat_action(message.chat.id, "typing")
+        dp.data[message.from_user.id] = {}
+        dp.data[message.from_user.id]["step"] = "name"
+    conn.close()
+
+@dp.message(F.text)
+async def handle_registration(message: Message):
+    user_data = dp.data.get(message.from_user.id, {})
+    step = user_data.get("step")
+
+    if step == "name":
+        dp.data[message.from_user.id]["name"] = message.text
+        dp.data[message.from_user.id]["step"] = "age"
+        await message.answer("Сколько тебе лет?")
+    elif step == "age":
+        if not message.text.isdigit():
+            await message.answer("Пожалуйста, введи возраст цифрами.")
+            return
+        dp.data[message.from_user.id]["age"] = int(message.text)
+        dp.data[message.from_user.id]["step"] = "gender"
+        await message.answer("Твой пол? (М / Ж)")
+    elif step == "gender":
+        gender = message.text.strip().lower()
+        if gender not in ["м", "ж"]:
+            await message.answer("Пожалуйста, введи М или Ж.")
+            return
+        dp.data[message.from_user.id]["gender"] = gender
+        dp.data[message.from_user.id]["step"] = "city"
+        await message.answer("Из какого ты города?")
+    elif step == "city":
+        dp.data[message.from_user.id]["city"] = message.text
+        dp.data[message.from_user.id]["step"] = "bio"
+        await message.answer("Напиши немного о себе:")
+    elif step == "bio":
+        dp.data[message.from_user.id]["bio"] = message.text
+        dp.data[message.from_user.id]["step"] = "photo"
+        await message.answer("Пришли фото для анкеты:")
+    elif step == "photo":
+        await message.answer("Пожалуйста, отправь именно фото, не текст.")
+
+@dp.message(F.photo)
+async def save_photo(message: Message):
+    if dp.data.get(message.from_user.id, {}).get("step") != "photo":
+        return
+    photo_id = message.photo[-1].file_id
+    data = dp.data[message.from_user.id]
+    conn = sqlite3.connect("database.db")
+    c = conn.cursor()
+    c.execute("INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?)", (
+        message.from_user.id,
+        data["name"],
+        data["age"],
+        data["gender"],
+        data["city"],
+        data["bio"],
+        photo_id
+    ))
+    conn.commit()
+    conn.close()
+    await message.answer("✅ Анкета создана! Начинаю поиск совпадений...")
+    await show_profile(message)
+
+async def show_profile(message: Message):
+    conn = sqlite3.connect("database.db")
+    c = conn.cursor()
+    c.execute("""
+        SELECT * FROM users
+        WHERE user_id != ?
+        AND user_id NOT IN (
+            SELECT to_id FROM likes WHERE from_id = ?
+        )
+        LIMIT 1
+    """, (message.from_user.id, message.from_user.id))
+    profile = c.fetchone()
+    conn.close()
+
+    if profile:
+        photo = profile[6]
+        text = f"Имя: {profile[1]}\\nВозраст: {profile[2]}\\nГород: {profile[4]}\\nО себе: {profile[5]}"
+        kb = InlineKeyboardBuilder()
+        kb.button(text="❤️", callback_data=f"like:{profile[0]}")
+        kb.button(text="❌", callback_data=f"skip:{profile[0]}")
+        await message.answer_photo(photo, caption=text, reply_markup=kb.as_markup())
+    else:
+        await message.answer("Нет больше анкет. Попробуй позже!")
+
+@dp.callback_query(F.data.startswith("like:"))
+async def like_user(callback: CallbackQuery):
+    to_id = int(callback.data.split(":")[1])
+    from_id = callback.from_user.id
+    conn = sqlite3.connect("database.db")
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO likes VALUES (?, ?)", (from_id, to_id))
+    c.execute("SELECT * FROM likes WHERE from_id = ? AND to_id = ?", (to_id, from_id))
+    mutual = c.fetchone()
+    conn.commit()
+    conn.close()
+    if mutual:
+        await callback.message.answer("🎉 У вас совпадение! Вы можете написать друг другу.")
+        try:
+            await bot.send_message(to_id, f"🎉 У тебя совпадение с @{callback.from_user.username}!")
+        except:
+            pass
+    await callback.message.delete()
+    await show_profile(callback.message)
+
+@dp.callback_query(F.data.startswith("skip:"))
+async def skip_user(callback: CallbackQuery):
+    from_id = callback.from_user.id
+    to_id = int(callback.data.split(":")[1])
+    conn = sqlite3.connect("database.db")
+    c = conn.cursor()
+    c.execute("INSERT OR IGNORE INTO likes VALUES (?, ?)", (from_id, to_id))
+    conn.commit()
+    conn.close()
+    await callback.message.delete()
+    await show_profile(callback.message)
+
+if __name__ == "__main__":
+    init_db()
+    asyncio.run(dp.start_polling(bot))
+''')
+
+bot_code_path
